@@ -14,17 +14,11 @@ services:
       - frontend
       - backend
     restart: unless-stopped
-    networks:
-      - app_net
-
   certbot:
     image: certbot/certbot
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
-    networks:
-      - app_net
-
   postgres:
     image: postgres:16-alpine
     environment:
@@ -34,12 +28,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U todo -d tododb"]
+      test: [ "CMD-SHELL", "pg_isready -U todo -d tododb" ]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - app_net
 
   minio:
     image: minio/minio:latest
@@ -53,12 +45,10 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - app_net
 
   backend:
     build: ./backend
@@ -76,8 +66,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    networks:
-      - app_net
 
   frontend:
     build: ./frontend
@@ -85,14 +73,8 @@ services:
       - "3000:3000"
     depends_on:
       - backend
-    networks:
-      - app_net
 
 volumes:
   postgres_data:
   minio_data:
   nginx_cache:
-
-networks:
-  app_net:
-    driver: bridge
