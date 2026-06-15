@@ -1,9 +1,13 @@
 # Развёртывание Next.js + FastAPI на Google Cloud Ubuntu Server
 
+Домен: **newposm.uz** | IP: **34.32.142.97**
+
+---
+
 ## 1. Подключение к серверу
 
 ```bash
-ssh USER@SERVER_IP
+ssh USER@34.32.142.97
 ```
 
 ---
@@ -11,8 +15,7 @@ ssh USER@SERVER_IP
 ## 2. Обновление системы
 
 ```bash
-sudo apt update
-sudo apt upgrade -y
+sudo apt update && sudo apt upgrade -y
 ```
 
 ---
@@ -21,12 +24,16 @@ sudo apt upgrade -y
 
 ```bash
 curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
 ```
 
-Проверка:
+Перезайти на сервер:
 
 ```bash
-docker --version
+exit
+# затем снова подключиться
+ssh USER@34.32.142.97
+docker ps   # проверка
 ```
 
 ---
@@ -35,98 +42,22 @@ docker --version
 
 ```bash
 sudo apt install docker-compose-plugin -y
-```
-
-Проверка:
-
-```bash
-docker compose version
+docker compose version   # проверка
 ```
 
 ---
 
-## 5. Добавление пользователя в группу Docker
+## 5. Настройка Firewall в Google Cloud
 
-```bash
-sudo usermod -aG docker $USER
+Открыть только эти порты (MinIO не нужен публично — он работает через nginx):
+
 ```
-
-Перезайти на сервер:
-
-```bash
-exit
-```
-
-Затем снова подключиться:
-
-```bash
-ssh USER@SERVER_IP
-```
-
-Проверка:
-
-```bash
-docker ps
+tcp:80, tcp:443
 ```
 
 ---
 
-## 6. Установка Nginx
-
-```bash
-sudo apt install nginx -y
-```
-
-Запуск:
-
-```bash
-sudo systemctl enable nginx
-sudo systemctl start nginx
-```
-
-Проверка:
-
-```bash
-sudo systemctl status nginx
-```
-
----
-
-## 7. Настройка Firewall в Google Cloud
-
-Создать правило Firewall:
-
-* Direction: Ingress
-* Source IPv4: 0.0.0.0/0
-* Protocols and ports:
-
-```text
-tcp:80,tcp:443
-```
-
----
-
-## 8. Настройка DNS
-
-Добавить A-записи:
-
-```text
-A     testsage.uz           SERVER_IP
-A     www.testsage.uz       SERVER_IP
-A     api.testsage.uz       SERVER_IP
-A     www.api.testsage.uz   SERVER_IP
-```
-
-Проверить:
-
-```bash
-dig testsage.uz
-dig api.testsage.uz
-```
-
----
-
-## 9. Клонирование проекта
+## 6. Клонирование проекта
 
 ```bash
 git clone REPOSITORY_URL app
@@ -135,207 +66,109 @@ cd app
 
 ---
 
-## 10. Запуск Docker-контейнеров
+## 7. Получение SSL сертификата (первый запуск)
 
-Сборка и запуск:
+Nginx не стартует без SSL сертификатов. Поэтому сначала поднимаем только HTTP,
+получаем сертификат, потом запускаем полный стек.
+
+### Шаг 7.1 — Временно заменить nginx конфиг на HTTP-only
+
+```bash
+cp nginx/conf.d/app.conf nginx/conf.d/app.conf.bak
+cp app.conf nginx/conf.d/app.conf
+```
+
+### Шаг 7.2 — Создать папки для certbot и запустить nginx
+
+```bash
+mkdir -p certbot/www certbot/conf
+docker compose up -d nginx
+```
+
+Проверить что nginx работает:
+```bash
+curl http://newposm.uz        # должно вернуть: ok
+curl http://api.newposm.uz    # должно вернуть: ok
+```
+
+### Шаг 7.3 — Получить SSL сертификат
+
+```bash
+docker compose run --rm certbot certonly \
+  --webroot \
+  --webroot-path=/var/www/certbot \
+  -d newposm.uz \
+  -d www.newposm.uz \
+  -d api.newposm.uz \
+  --email sanjaranvarov55563@gmail.com \
+  --agree-tos \
+  --no-eff-email
+```
+
+### Шаг 7.4 — Восстановить production nginx конфиг
+
+```bash
+cp nginx/conf.d/app.conf.bak nginx/conf.d/app.conf
+```
+
+---
+
+## 8. Запуск всего стека
 
 ```bash
 docker compose up -d --build
 ```
 
-Проверка:
+Проверить что все контейнеры работают:
 
 ```bash
 docker ps
 ```
 
-Логи:
+Должны быть запущены: `nginx`, `frontend`, `backend`, `postgres`, `minio`
+
+---
+
+## 9. Проверка сайтов
 
 ```bash
-docker logs -f frontend
-docker logs -f backend
+curl https://newposm.uz
+curl https://api.newposm.uz/todos
 ```
 
 ---
 
-## 11. Установка Certbot
+## 10. Автообновление SSL сертификатов
+
+Добавить в crontab:
 
 ```bash
-sudo apt install certbot python3-certbot-nginx -y
+crontab -e
+```
+
+Добавить строку:
+
+```
+0 3 * * * cd /home/USER/app && docker compose run --rm certbot renew --quiet && docker compose kill -s HUP nginx
 ```
 
 ---
 
-## 12. Создание конфигурации Nginx
-
-Создать файл:
+## 11. Полезные команды
 
 ```bash
-sudo nano /etc/nginx/sites-available/testsage
-```
-
-Содержимое:
-
-```nginx
-upstream fastapi_backend {
-    server localhost:8000;
-    keepalive 32;
-}
-
-upstream nextjs_frontend {
-    server localhost:3000;
-    keepalive 32;
-}
-
-server {
-    listen 80;
-    server_name testsage.uz www.testsage.uz api.testsage.uz www.api.testsage.uz;
-
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name api.testsage.uz www.api.testsage.uz;
-
-    ssl_certificate /etc/letsencrypt/live/testsage.uz/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/testsage.uz/privkey.pem;
-
-    location /media/ {
-        alias /var/www/media/;
-        expires 30d;
-        access_log off;
-    }
-
-    location / {
-        proxy_pass http://fastapi_backend;
-
-        proxy_http_version 1.1;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    server_name testsage.uz www.testsage.uz;
-
-    ssl_certificate /etc/letsencrypt/live/testsage.uz/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/testsage.uz/privkey.pem;
-
-    location / {
-        proxy_pass http://nextjs_frontend;
-
-        proxy_http_version 1.1;
-
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
----
-
-## 13. Активация конфигурации
-
-```bash
-sudo ln -s /etc/nginx/sites-available/testsage /etc/nginx/sites-enabled/
-```
-
-Удалить дефолтный сайт:
-
-```bash
-sudo rm -f /etc/nginx/sites-enabled/default
-```
-
-Проверить:
-
-```bash
-sudo nginx -t
-```
-
-Перезапустить:
-
-```bash
-sudo systemctl reload nginx
-```
-
----
-
-## 14. Получение SSL сертификата
-
-```bash
-sudo certbot --nginx \
--d testsage.uz \
--d www.testsage.uz \
--d api.testsage.uz \
--d www.api.testsage.uz
-```
-
-Проверка:
-
-```bash
-sudo certbot certificates
-```
-
----
-
-## 15. Проверка автообновления сертификатов
-
-```bash
-sudo certbot renew --dry-run
-```
-
----
-
-## 16. Полезные команды
-
-Контейнеры:
-
-```bash
+# Контейнеры
 docker ps
-docker compose up -d
+docker compose up -d --build
 docker compose down
 docker compose restart
 docker logs -f frontend
 docker logs -f backend
+docker logs -f nginx
+
+# Перезагрузить nginx без остановки
+docker compose kill -s HUP nginx
+
+# Проверить SSL сертификат
+docker compose run --rm certbot certificates
 ```
-
-Nginx:
-
-```bash
-sudo nginx -t
-sudo systemctl reload nginx
-sudo systemctl restart nginx
-```
-
-SSL:
-
-```bash
-sudo certbot certificates
-sudo certbot renew --dry-run
-```
-
-Проверка сайтов:
-
-```bash
-curl https://testsage.uz
-curl https://api.testsage.uz
-```
-
-
-docker compose run certbot certonly \
-  --webroot \
-  --webroot-path=/var/www/certbot \
-  -d testsage.uz \
-  -d www.testsage.uz \
--d api.testsage.uz \
-  --email shukhratbekovb@gmail.com \
-  --agree-tos

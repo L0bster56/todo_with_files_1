@@ -1,4 +1,4 @@
-const BASE = "https://api.testsage.uz";
+const BASE = "https://api.newposm.uz";
 
 export interface TodoFile {
   id: number;
