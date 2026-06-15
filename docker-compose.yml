@@ -14,13 +14,11 @@ services:
       - frontend
       - backend
     restart: unless-stopped
-
   certbot:
     image: certbot/certbot
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
-
   postgres:
     image: postgres:16-alpine
     environment:
@@ -34,7 +32,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    restart: unless-stopped
 
   minio:
     image: minio/minio:latest
@@ -42,9 +39,9 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # Говорим MinIO что его публичный адрес - api.newposm.uz
-      # Это нужно чтобы presigned URL-ы для скачивания файлов работали через nginx
-      MINIO_SERVER_URL: https://api.newposm.uz
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -52,30 +49,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    restart: unless-stopped
 
   backend:
     build: ./backend
-    environment:
-      DATABASE_URL: postgresql://todo:todo@postgres:5432/tododb
-      S3_ENDPOINT: http://minio:9000
-      # Presigned URL-ы для браузера идут через nginx → api.newposm.uz/todo-files/...
-      S3_PUBLIC_ENDPOINT: https://api.newposm.uz
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_BUCKET: todo-files
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
-    restart: unless-stopped
 
   frontend:
     build: ./frontend
+    ports:
+      - "3000:3000"
     depends_on:
       - backend
-    restart: unless-stopped
 
 volumes:
   postgres_data:
